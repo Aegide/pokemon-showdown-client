@@ -44,3 +44,5 @@ package-lock.json
 /replays/theme/wrapper.inc.php
 
 .vscode
+/.vs/slnx.sqlite
+/.vs/slnx.sqlite-journal
