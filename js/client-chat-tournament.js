@@ -492,7 +492,7 @@
 					var type = endData.generator;
 					this.room.$chat.append("<div class=\"notice tournament-message-end-winner\">Congratulations to " + BattleLog.escapeHTML(arrayToPhrase(endData.results[0])) + " for winning the " + BattleLog.escapeFormat(endData.format) + " " + BattleLog.escapeHTML(type) + " Tournament!</div>");
 					if (endData.results[1])
-						this.room.$chat.append("<div class=\"notice tournament-message-end-runnerup\">Runner-up" + (endData.results[1].length > 1 ? "s" : "") + ": " + BattleLog.escapeHTML(arrayToPhrase(endData.results[1])) + "</div>");
+						this.room.$chat.append("<div class=\"notice tournament-message-end-runnerup\">Runner" + (endData.results[1].length > 1 ? "s" : "") + "-up: " + BattleLog.escapeHTML(arrayToPhrase(endData.results[1])) + "</div>");
 
 					// Fallthrough
 
@@ -802,7 +802,7 @@
 		};
 
 		TournamentBox.prototype.teamSelect = function (team, button) {
-			app.addPopup(TeamPopup, {team: team, format: this.info.teambuilderFormat, sourceEl: button, room: this.room.id});
+			app.addPopup(TeamPopup, {team: team, format: this.info.teambuilderFormat, sourceEl: button, room: this.room.id, isMoreTeams: false, folderToggleOn: true, folderNotExpanded: []});
 		};
 
 		return TournamentBox;

@@ -36,7 +36,7 @@ type HPColor = 'r' | 'y' | 'g';
 
 class Pokemon implements PokemonDetails, PokemonHealth {
 	name = '';
-	species = '';
+	speciesForme = '';
 
 	/**
 	 * A string representing information extractable from textual
@@ -64,8 +64,8 @@ class Pokemon implements PokemonDetails, PokemonHealth {
 	/**
 	 * `` `${ident}|${details}` ``. Tracked for ease of searching.
 	 *
-	 * As with ident and details, will only change during the first
-	 * switch-in.
+	 * As with ident, blank before the first switch-in, and will only
+	 * change during the first switch-in.
 	 */
 	searchid = '';
 
@@ -102,13 +102,17 @@ class Pokemon implements PokemonDetails, PokemonHealth {
 
 	sprite: PokemonSprite;
 
-	constructor(data: any, side: Side) {
+	constructor(data: PokemonDetails, side: Side) {
 		this.side = side;
-		this.species = data.species;
+		this.speciesForme = data.speciesForme;
 
-		// TODO: stop doing this
-		Object.assign(this, Dex.getTemplate(data.species));
-		Object.assign(this, data);
+		this.details = data.details;
+		this.name = data.name;
+		this.level = data.level;
+		this.shiny = data.shiny;
+		this.gender = data.gender || 'N';
+		this.ident = data.ident;
+		this.searchid = data.searchid;
 
 		this.sprite = side.battle.scene.addPokemonSprite(this);
 	}
@@ -117,19 +121,21 @@ class Pokemon implements PokemonDetails, PokemonHealth {
 		return this.side.active.includes(this);
 	}
 
-	getHPColor(): HPColor {
+	/** @deprecated */
+	private getHPColor(): HPColor {
 		if (this.hpcolor) return this.hpcolor;
 		let ratio = this.hp / this.maxhp;
 		if (ratio > 0.5) return 'g';
 		if (ratio > 0.2) return 'y';
 		return 'r';
 	}
-	getHPColorClass() {
+	/** @deprecated */
+	private getHPColorClass() {
 		switch (this.getHPColor()) {
-		case 'y': return ' hpbar-yellow';
-		case 'r': return ' hpbar-red';
+		case 'y': return 'hpbar hpbar-yellow';
+		case 'r': return 'hpbar hpbar-red';
 		}
-		return '';
+		return 'hpbar';
 	}
 	static getPixelRange(pixels: number, color: HPColor | ''): [number, number] {
 		let epsilon = 0.5 / 714;
@@ -392,8 +398,8 @@ class Pokemon implements PokemonDetails, PokemonHealth {
 		return '' + badBoostTable[-this.boosts[boostStat]] + '&nbsp;' + boostStatTable[boostStat];
 	}
 	getWeightKg(serverPokemon?: ServerPokemon) {
-		let autotomizeFactor = this.volatiles.autotomize ? this.volatiles.autotomize[1] * 100 : 0;
-		return Math.max(this.getTemplate(serverPokemon).weightkg - autotomizeFactor, 0.1);
+		let autotomizeFactor = this.volatiles.autotomize?.[1] * 100 || 0;
+		return Math.max(this.getSpecies(serverPokemon).weightkg - autotomizeFactor, 0.1);
 	}
 	getBoostType(boostStat: BoostStatName) {
 		if (!this.boosts[boostStat]) return 'neutral';
@@ -431,6 +437,7 @@ class Pokemon implements PokemonDetails, PokemonHealth {
 			delete this.volatiles['encore'];
 			delete this.volatiles['foresight'];
 			delete this.volatiles['imprison'];
+			delete this.volatiles['laserfocus'];
 			delete this.volatiles['mimic'];
 			delete this.volatiles['miracleeye'];
 			delete this.volatiles['nightmare'];
@@ -465,7 +472,7 @@ class Pokemon implements PokemonDetails, PokemonHealth {
 		if (this.volatiles.typechange) {
 			types = this.volatiles.typechange[1].split('/');
 		} else {
-			types = this.getTemplate(serverPokemon).types;
+			types = this.getSpecies(serverPokemon).types;
 		}
 		if (this.volatiles.roost && types.includes('Flying')) {
 			types = types.filter(typeName => typeName !== 'Flying');
@@ -485,7 +492,7 @@ class Pokemon implements PokemonDetails, PokemonHealth {
 		}
 
 		let item = toID(serverPokemon ? serverPokemon.item : this.item);
-		let ability = toID(this.ability || (serverPokemon && serverPokemon.ability));
+		let ability = toID(this.ability || serverPokemon?.ability);
 		if (battle.hasPseudoWeather('Magic Room') || this.volatiles['embargo'] || ability === 'klutz') {
 			item = '' as ID;
 		}
@@ -508,12 +515,15 @@ class Pokemon implements PokemonDetails, PokemonHealth {
 		const [types, addedType] = this.getTypes(serverPokemon);
 		return addedType ? types.concat(addedType) : types;
 	}
-	getSpecies(serverPokemon?: ServerPokemon): string {
+	getSpeciesForme(serverPokemon?: ServerPokemon): string {
 		return this.volatiles.formechange ? this.volatiles.formechange[1] :
-			(serverPokemon ? serverPokemon.species : this.species);
+			(serverPokemon ? serverPokemon.speciesForme : this.speciesForme);
 	}
-	getTemplate(serverPokemon?: ServerPokemon) {
-		return this.side.battle.dex.getTemplate(this.getSpecies(serverPokemon));
+	getSpecies(serverPokemon?: ServerPokemon) {
+		return this.side.battle.dex.getSpecies(this.getSpeciesForme(serverPokemon));
+	}
+	getBaseSpecies() {
+		return this.side.battle.dex.getSpecies(this.speciesForme);
 	}
 	reset() {
 		this.clearVolatile();
@@ -521,7 +531,7 @@ class Pokemon implements PokemonDetails, PokemonHealth {
 		this.fainted = false;
 		this.status = '';
 		this.moveTrack = [];
-		this.name = this.name || this.species;
+		this.name = this.name || this.speciesForme;
 	}
 	// This function is used for two things:
 	//   1) The percentage to display beside the HP bar.
@@ -694,8 +704,13 @@ class Side {
 		delete this.sideConditions[id];
 		this.battle.scene.removeSideCondition(this.n, id);
 	}
-	newPokemon(data: any, replaceSlot = -1) {
-		let poke = new Pokemon(data, this);
+	addPokemon(name: string, ident: string, details: string, replaceSlot = -1) {
+		const oldItem = replaceSlot >= 0 ? this.pokemon[replaceSlot].item : undefined;
+
+		const data = this.battle.parseDetails(name, ident, details);
+		const poke = new Pokemon(data, this);
+		if (oldItem) poke.item = oldItem;
+
 		if (!poke.ability && poke.baseAbility) poke.ability = poke.baseAbility;
 		poke.reset();
 
@@ -739,7 +754,7 @@ class Side {
 						if (curPoke === poke) continue;
 						if (curPoke.fainted) continue;
 						if (this.active.indexOf(curPoke) >= 0) continue;
-						if (curPoke.species === 'Zoroark' || curPoke.species === 'Zorua' || curPoke.ability === 'Illusion') {
+						if (curPoke.speciesForme === 'Zoroark' || curPoke.speciesForme === 'Zorua' || curPoke.ability === 'Illusion') {
 							illusionFound = curPoke;
 							break;
 						}
@@ -778,8 +793,8 @@ class Side {
 		pokemon.clearVolatile();
 		pokemon.lastMove = '';
 		this.battle.lastMove = 'switch-in';
-		if (this.lastPokemon && (this.lastPokemon.lastMove === 'batonpass' || this.lastPokemon.lastMove === 'zbatonpass')) {
-			pokemon.copyVolatileFrom(this.lastPokemon);
+		if (['batonpass', 'zbatonpass'].includes(this.lastPokemon?.lastMove!)) {
+			pokemon.copyVolatileFrom(this.lastPokemon!);
 		}
 
 		this.battle.scene.animSummon(pokemon, slot);
@@ -907,18 +922,42 @@ class Side {
 }
 
 enum Playback {
+	/**
+	 * Battle is at the end of the queue. `|start` is not in the queue.
+	 * Battle is waiting for `.add()` or `.setQueue()` to add `|start` to
+	 * the queue. Adding other queue entries will happen immediately,
+	 * bringing the state back to Uninitialized.
+	 */
 	Uninitialized = 0,
+	/**
+	 * Battle is at `|start` and hasn't been started yet.
+	 * Battle is paused, waiting for `.play()`.
+	 */
 	Ready = 1,
+	/**
+	 * `.play()` has been called. Battle should be animating
+	 * normally.
+	 */
 	Playing = 2,
+	/**
+	 * `.pause()` has been called. Battle is waiting for `.play()`.
+	 */
 	Paused = 3,
+	/**
+	 * Battle is at the end of the queue. Battle is waiting for
+	 * `.add()` for further battle progress.
+	 */
 	Finished = 4,
+	/**
+	 * Battle is fast forwarding through the queue, with animations off.
+	 */
 	Seeking = 5,
 }
 
 interface PokemonDetails {
 	details: string;
 	name: string;
-	species: string;
+	speciesForme: string;
 	level: number;
 	shiny: boolean;
 	gender: GenderName | '';
@@ -992,6 +1031,11 @@ class Battle {
 
 	turn = 0;
 	/**
+	 * Has playback gotten to Team Preview or `|start` yet?
+	 * (Affects whether BGM is playing)
+	 */
+	started = false;
+	/**
 	 * Has playback gotten to the point where a player has won or tied?
 	 * (Affects whether BGM is playing)
 	 */
@@ -1037,6 +1081,10 @@ class Battle {
 	debug = false;
 	joinButtons = false;
 
+	/**
+	 * The actual pause state. Will only be true if playback is actually
+	 * paused, not just waiting for the opponent to make a move.
+	 */
 	paused = true;
 	playbackState = Playback.Uninitialized;
 
@@ -1090,6 +1138,7 @@ class Battle {
 	reset(dontResetSound?: boolean) {
 		// battle state
 		this.turn = 0;
+		this.started = false;
 		this.ended = false;
 		this.weather = '' as ID;
 		this.weatherTimeLeft = 0;
@@ -1097,12 +1146,13 @@ class Battle {
 		this.pseudoWeather = [];
 		this.lastMove = '';
 
-		// DOM state
-		this.scene.reset();
-
 		for (const side of this.sides) {
 			if (side) side.reset();
 		}
+		this.myPokemon = null;
+
+		// DOM state
+		this.scene.reset();
 
 		// activity queue state
 		this.activeMoveIsSpread = null;
@@ -1111,10 +1161,11 @@ class Battle {
 		this.resultWaiting = false;
 		this.paused = true;
 		if (this.playbackState !== Playback.Seeking) {
-			this.playbackState = (this.activityQueue.length ? Playback.Ready : Playback.Uninitialized);
-			if (!dontResetSound) this.scene.soundStop();
+			this.playbackState = Playback.Uninitialized;
+			if (!dontResetSound) this.scene.resetBgm();
 		}
 		this.resetTurnsSinceMoved();
+		this.nextActivity();
 	}
 	destroy() {
 		this.scene.destroy();
@@ -1235,7 +1286,7 @@ class Battle {
 	updateToxicTurns() {
 		for (const side of this.sides) {
 			for (const poke of side.active) {
-				if (poke && poke.status === 'tox') poke.statusData.toxicTurns++;
+				if (poke?.status === 'tox') poke.statusData.toxicTurns++;
 			}
 		}
 	}
@@ -1331,6 +1382,7 @@ class Battle {
 		}
 	}
 	animateMove(pokemon: Pokemon, move: Move, target: Pokemon | null, kwArgs: KWArgs) {
+		this.activeMoveIsSpread = kwArgs.spread;
 		if (this.fastForward || kwArgs.still) return;
 
 		if (!target) target = pokemon.side.foe.active[0];
@@ -1353,14 +1405,18 @@ class Battle {
 			return;
 		}
 
-		this.activeMoveIsSpread = kwArgs.spread;
 		let targets = [pokemon];
 		if (kwArgs.spread === '.') {
 			//  no target was hit by the attack
 			targets.push(target.side.missedPokemon);
 		} else {
 			for (const hitTarget of kwArgs.spread.split(',')) {
-				targets.push(this.getPokemon(hitTarget + ': ?')!);
+				const curTarget = this.getPokemon(hitTarget + ': ?');
+				if (!curTarget) {
+					this.log(['error', `Invalid spread move target: "${hitTarget}"`]);
+					continue;
+				}
+				targets.push(curTarget);
 			}
 		}
 
@@ -1473,7 +1529,10 @@ class Battle {
 				let ofpoke = this.getPokemon(kwArgs.of);
 				this.activateAbility(ofpoke, effect);
 				if (effect.effectType === 'Item') {
-					(ofpoke || poke).item = effect.name;
+					const itemPoke = ofpoke || poke;
+					if (itemPoke.prevItem !== effect.name) {
+						itemPoke.item = effect.name;
+					}
 				}
 				switch (effect.id) {
 				case 'brn':
@@ -1574,7 +1633,7 @@ class Battle {
 			if (this.gen === 1 && stat === 'spa') stat = 'spc';
 			let amount = parseInt(args[3], 10);
 			if (amount === 0) {
-				this.scene.resultAnim(poke, 'Highest ' + BattleStats[stat], 'neutral');
+				this.scene.resultAnim(poke, 'already ' + poke.getBoost(stat), 'neutral');
 				this.log(args, kwArgs);
 				break;
 			}
@@ -1601,7 +1660,7 @@ class Battle {
 			if (this.gen === 1 && stat === 'spa') stat = 'spc';
 			let amount = parseInt(args[3], 10);
 			if (amount === 0) {
-				this.scene.resultAnim(poke, 'Lowest ' + BattleStats[stat], 'bad');
+				this.scene.resultAnim(poke, 'already ' + poke.getBoost(stat), 'neutral');
 				this.log(args, kwArgs);
 				break;
 			}
@@ -1742,7 +1801,7 @@ class Battle {
 			let poke = this.getPokemon(args[1]);
 			if (poke) {
 				this.scene.resultAnim(poke, 'Super-effective', 'bad');
-				if (window.Config && Config.server && Config.server.afd) {
+				if (window.Config?.server?.afd) {
 					this.scene.runOtherAnim('hitmark' as ID, [poke]);
 				}
 			}
@@ -1809,6 +1868,7 @@ class Battle {
 				}
 				break;
 			}
+			this.scene.animReset(poke);
 			this.log(args, kwArgs);
 			break;
 		}
@@ -2167,19 +2227,19 @@ class Battle {
 			poke.removeVolatile('typeadd' as ID);
 			poke.removeVolatile('typechange' as ID);
 
-			let newSpecies = args[2];
-			let commaIndex = newSpecies.indexOf(',');
+			let newSpeciesForme = args[2];
+			let commaIndex = newSpeciesForme.indexOf(',');
 			if (commaIndex !== -1) {
-				let level = newSpecies.substr(commaIndex + 1).trim();
+				let level = newSpeciesForme.substr(commaIndex + 1).trim();
 				if (level.charAt(0) === 'L') {
 					poke.level = parseInt(level.substr(1), 10);
 				}
-				newSpecies = args[2].substr(0, commaIndex);
+				newSpeciesForme = args[2].substr(0, commaIndex);
 			}
-			let template = this.dex.getTemplate(newSpecies);
+			let species = this.dex.getSpecies(newSpeciesForme);
 
-			poke.species = newSpecies;
-			poke.ability = poke.baseAbility = (template.abilities ? template.abilities['0'] : '');
+			poke.speciesForme = newSpeciesForme;
+			poke.ability = poke.baseAbility = (species.abilities ? species.abilities['0'] : '');
 
 			poke.details = args[2];
 			poke.searchid = args[1].substr(0, 2) + args[1].substr(3) + '|' + args[2];
@@ -2201,23 +2261,23 @@ class Battle {
 			poke.boosts = {...tpoke.boosts};
 			poke.copyTypesFrom(tpoke);
 			poke.ability = tpoke.ability;
-			const species = (tpoke.volatiles.formechange ? tpoke.volatiles.formechange[1] : tpoke.species);
+			const speciesForme = (tpoke.volatiles.formechange ? tpoke.volatiles.formechange[1] : tpoke.speciesForme);
 			const pokemon = tpoke;
 			const shiny = tpoke.shiny;
 			const gender = tpoke.gender;
 			poke.addVolatile('transform' as ID, pokemon, shiny, gender);
-			poke.addVolatile('formechange' as ID, species);
+			poke.addVolatile('formechange' as ID, speciesForme);
 			for (const trackedMove of tpoke.moveTrack) {
 				poke.rememberMove(trackedMove[0], 0);
 			}
 			this.scene.animTransform(poke);
 			this.scene.resultAnim(poke, 'Transformed', 'good');
-			this.log(['-transform', args[1], args[2], tpoke.species], kwArgs);
+			this.log(['-transform', args[1], args[2], tpoke.speciesForme], kwArgs);
 			break;
 		}
 		case '-formechange': {
 			let poke = this.getPokemon(args[1])!;
-			let template = Dex.getTemplate(args[2]);
+			let species = Dex.getSpecies(args[2]);
 			let fromeffect = Dex.getEffect(kwArgs.from);
 			let isCustomAnim = false;
 			poke.removeVolatile('typeadd' as ID);
@@ -2227,7 +2287,7 @@ class Battle {
 			if (!kwArgs.silent) {
 				this.activateAbility(poke, fromeffect);
 			}
-			poke.addVolatile('formechange' as ID, template.species); // the formechange volatile reminds us to revert the sprite change on switch-out
+			poke.addVolatile('formechange' as ID, species.name); // the formechange volatile reminds us to revert the sprite change on switch-out
 			this.scene.animTransform(poke, isCustomAnim);
 			this.log(args, kwArgs);
 			break;
@@ -2272,6 +2332,10 @@ class Battle {
 				poke.addVolatile('typeadd' as ID, type);
 				if (kwArgs.silent) break;
 				this.scene.typeAnim(poke, type);
+				break;
+			case 'dynamax':
+				poke.addVolatile('dynamax' as ID);
+				this.scene.animTransform(poke, true);
 				break;
 			case 'powertrick':
 				this.scene.resultAnim(poke, 'Power Trick', 'neutral');
@@ -2410,6 +2474,9 @@ class Battle {
 				// do nothing
 			} else {
 				switch (effect.id) {
+				case 'dynamax':
+					this.scene.animTransform(poke);
+					break;
 				case 'powertrick':
 					this.scene.resultAnim(poke, 'Power Trick', 'neutral');
 					break;
@@ -2612,7 +2679,7 @@ class Battle {
 				poke.removeVolatile('telekinesis' as ID);
 				this.scene.anim(poke, {time: 100});
 				break;
-			case 'skillswap':
+			case 'skillswap': case 'wanderingspirit':
 				if (this.gen <= 4) break;
 				let pokeability = Dex.sanitizeName(kwArgs.ability) || target!.ability;
 				let targetability = Dex.sanitizeName(kwArgs.ability2) || poke.ability;
@@ -2713,10 +2780,10 @@ class Battle {
 			let fromeffect = Dex.getEffect(kwArgs.from);
 			this.activateAbility(poke, fromeffect);
 			let maxTimeLeft = 0;
-			if (['electricterrain', 'grassyterrain', 'mistyterrain', 'psychicterrain'].includes(effect.id)) {
+			if (effect.id.endsWith('terrain')) {
 				for (let i = this.pseudoWeather.length - 1; i >= 0; i--) {
-					let pwName = this.pseudoWeather[i][0];
-					if (['Electric Terrain', 'Grassy Terrain', 'Misty Terrain', 'Psychic Terrain'].includes(pwName)) {
+					let pwID = toID(this.pseudoWeather[i][0]);
+					if (pwID.endsWith('terrain')) {
 						this.pseudoWeather.splice(i, 1);
 						continue;
 					}
@@ -2771,7 +2838,7 @@ class Battle {
 			break;
 		}
 		default: {
-			if (this.errorCallback) this.errorCallback(this);
+			throw new Error(`Unrecognized minor action: ${args[0]}`);
 			break;
 		}}
 	}
@@ -2802,19 +2869,26 @@ class Battle {
 		}
 		if (foe) siden = (siden ? 0 : 1);
 
-		let data = Dex.getTemplate(name);
+		let data = Dex.getSpecies(name);
 		return data.spriteData[siden];
 	}
 	*/
-	parseDetails(name: string, pokemonid: string, details = "", output: PokemonDetails = {} as any) {
+	/**
+	 * @param name Leave blank for Team Preview
+	 * @param pokemonid Leave blank for Team Preview
+	 * @param details
+	 * @param output
+	 */
+	parseDetails(name: string, pokemonid: string, details: string, output: PokemonDetails = {} as any) {
+		const isTeamPreview = !name;
 		output.details = details;
 		output.name = name;
-		output.species = name;
+		output.speciesForme = name;
 		output.level = 100;
 		output.shiny = false;
 		output.gender = '';
-		output.ident = (name ? pokemonid : '');
-		output.searchid = (name ? (pokemonid + '|' + details) : '');
+		output.ident = (!isTeamPreview ? pokemonid : '');
+		output.searchid = (!isTeamPreview ? `${pokemonid}|${details}` : '');
 		let splitDetails = details.split(', ');
 		if (splitDetails[splitDetails.length - 1] === 'shiny') {
 			output.shiny = true;
@@ -2828,7 +2902,7 @@ class Battle {
 			output.level = parseInt(splitDetails[1].substr(1), 10) || 100;
 		}
 		if (splitDetails[0]) {
-			output.species = splitDetails[0];
+			output.speciesForme = splitDetails[0];
 		}
 		return output;
 	}
@@ -2895,130 +2969,76 @@ class Battle {
 		}
 		return {name, siden, slot, pokemonid};
 	}
-	getPokemon(pokemonid: string, details?: string) {
-		let isNew = false; // if true, don't match any pokemon that already exists (for Team Preview)
-		let isSwitch = false; // if true, don't match an active, fainted, or immediately-previously switched-out pokemon
-		let isInactive = false; // if true, don't match an active pokemon
-		let createIfNotFound = false; // if true, create the pokemon if a match wasn't found
+	getSwitchedPokemon(pokemonid: string, details: string) {
+		if (pokemonid === '??') throw new Error(`pokemonid not passed`);
+		const {name, siden, slot, pokemonid: parsedPokemonid} = this.parsePokemonId(pokemonid);
+		pokemonid = parsedPokemonid;
 
-		if (pokemonid === undefined || pokemonid === '??') return null;
-		if (pokemonid.substr(0, 5) === 'new: ') {
-			pokemonid = pokemonid.substr(5);
-			isNew = true;
-			createIfNotFound = true; // obviously
-		}
-		if (pokemonid.substr(0, 10) === 'switchin: ') {
-			pokemonid = pokemonid.substr(10);
-			isSwitch = true;
-			createIfNotFound = true;
-		}
-		let parseIdResult = this.parsePokemonId(pokemonid);
-		let {name, siden, slot} = parseIdResult;
-		pokemonid = parseIdResult.pokemonid;
+		const searchid = `${pokemonid}|${details}`;
+		const side = this.sides[siden];
 
-		if (!details) {
-			if (siden < 0) return null;
-			if (this.sides[siden].active[slot]) return this.sides[siden].active[slot];
-			if (slot >= 0) isInactive = true;
-		}
+		// search inactive revealed pokemon
+		for (let i = 0; i < side.pokemon.length; i++) {
+			let pokemon = side.pokemon[i];
+			if (pokemon.fainted) continue;
+			// already active, can't be switching in
+			if (side.active.includes(pokemon)) continue;
+			// just switched out, can't be switching in
+			if (pokemon === side.lastPokemon && !side.active[slot]) continue;
 
-		let searchid = '';
-		if (details) searchid = pokemonid + '|' + details;
-
-		// search p1's pokemon
-		if (siden !== this.p2.n && !isNew) {
-			const active = this.p1.active[slot];
-			if (active && active.searchid === searchid && !isSwitch) {
-				active.slot = slot;
-				return active;
+			if (pokemon.searchid === searchid) {
+				// exact match
+				if (slot >= 0) pokemon.slot = slot;
+				return pokemon;
 			}
-			for (let i = 0; i < this.p1.pokemon.length; i++) {
-				let pokemon = this.p1.pokemon[i];
-				if (pokemon.fainted && (isNew || isSwitch)) continue;
-				if (isSwitch || isInactive) {
-					if (this.p1.active.indexOf(pokemon) >= 0) continue;
-				}
-				if (isSwitch && pokemon === this.p1.lastPokemon && !this.p1.active[slot]) continue;
-				if ((searchid && pokemon.searchid === searchid) || // exact match
-					(!searchid && pokemon.ident === pokemonid)) { // name matched, good enough
-					if (slot >= 0) pokemon.slot = slot;
-					return pokemon;
-				}
-				if (!pokemon.searchid && pokemon.checkDetails(details)) { // switch-in matches Team Preview entry
-					pokemon = this.p1.newPokemon(this.parseDetails(name, pokemonid, details, {item: pokemon.item} as any), i);
-					if (slot >= 0) pokemon.slot = slot;
-					return pokemon;
-				}
+			if (!pokemon.searchid && pokemon.checkDetails(details)) {
+				// switch-in matches Team Preview entry
+				pokemon = side.addPokemon(name, pokemonid, details, i);
+				if (slot >= 0) pokemon.slot = slot;
+				return pokemon;
 			}
 		}
-
-		// search p2's pokemon
-		if (siden !== this.p1.n && !isNew) {
-			const active = this.p2.active[slot];
-			if (active && active.searchid === searchid && !isSwitch) {
-				if (slot >= 0) active.slot = slot;
-				return active;
-			}
-			for (let i = 0; i < this.p2.pokemon.length; i++) {
-				let pokemon = this.p2.pokemon[i];
-				if (pokemon.fainted && (isNew || isSwitch)) continue;
-				if (isSwitch || isInactive) {
-					if (this.p2.active.indexOf(pokemon) >= 0) continue;
-				}
-				if (isSwitch && pokemon === this.p2.lastPokemon && !this.p2.active[slot]) continue;
-				if ((searchid && pokemon.searchid === searchid) || // exact match
-					(!searchid && pokemon.ident === pokemonid)) { // name matched, good enough
-					if (slot >= 0) pokemon.slot = slot;
-					return pokemon;
-				}
-				if (!pokemon.searchid && pokemon.checkDetails(details)) { // switch-in matches Team Preview entry
-					pokemon = this.p2.newPokemon(this.parseDetails(name, pokemonid, details, {item: pokemon.item} as any), i);
-					if (slot >= 0) pokemon.slot = slot;
-					return pokemon;
-				}
-			}
-		}
-
-		if (!details || !createIfNotFound) return null;
 
 		// pokemon not found, create a new pokemon object for it
+		const pokemon = side.addPokemon(name, pokemonid, details);
+		if (slot >= 0) pokemon.slot = slot;
+		return pokemon;
+	}
+	rememberTeamPreviewPokemon(sideid: string, details: string) {
+		const {siden} = this.parsePokemonId(sideid);
 
-		if (siden < 0) throw new Error("Invalid pokemonid passed to getPokemon");
-
-		let species = name;
-		let gender = '';
-		let level = 100;
-		let shiny = false;
-		if (details) {
-			let splitDetails = details.split(', ');
-			if (splitDetails[splitDetails.length - 1] === 'shiny') {
-				shiny = true;
-				splitDetails.pop();
-			}
-			if (splitDetails[splitDetails.length - 1] === 'M' || splitDetails[splitDetails.length - 1] === 'F') {
-				gender = splitDetails[splitDetails.length - 1];
-				splitDetails.pop();
-			}
-			if (splitDetails[1]) {
-				level = parseInt(splitDetails[1].substr(1), 10) || 100;
-			}
-			if (splitDetails[0]) {
-				species = splitDetails[0];
+		return this.sides[siden].addPokemon('', '', details);
+	}
+	findCorrespondingPokemon(serverPokemon: {ident: string, details: string}) {
+		const {siden} = this.parsePokemonId(serverPokemon.ident);
+		const searchid = `${serverPokemon.ident}|${serverPokemon.details}`;
+		for (const pokemon of this.sides[siden].pokemon) {
+			if (pokemon.searchid === searchid) {
+				return pokemon;
 			}
 		}
-		if (slot < 0) slot = 0;
-		let pokemon = this.sides[siden].newPokemon({
-			species,
-			details,
-			name,
-			ident: (name ? pokemonid : ''),
-			searchid: (name ? (pokemonid + '|' + details) : ''),
-			level,
-			gender,
-			shiny,
-			slot,
-		}, isNew ? -2 : -1);
-		return pokemon;
+		return null;
+	}
+	getPokemon(pokemonid: string | undefined) {
+		if (!pokemonid || pokemonid === '??' || pokemonid === 'null') return null;
+		const {siden, slot, pokemonid: parsedPokemonid} = this.parsePokemonId(pokemonid);
+		pokemonid = parsedPokemonid;
+
+		/** if true, don't match an active pokemon */
+		const isInactive = (slot < 0);
+		const side = this.sides[siden];
+
+		// search player's pokemon
+		if (!isInactive && side.active[slot]) return side.active[slot];
+		for (const pokemon of side.pokemon) {
+			if (isInactive && side.active.includes(pokemon)) continue;
+			if (pokemon.ident === pokemonid) { // name matched, good enough
+				if (slot >= 0) pokemon.slot = slot;
+				return pokemon;
+			}
+		}
+
+		return null;
 	}
 	getSide(sidename: string): Side {
 		if (sidename === 'p1' || sidename.substr(0, 3) === 'p1:') return this.p1;
@@ -3037,11 +3057,11 @@ class Battle {
 		if (command) this.activityQueue.push(command);
 
 		if (this.playbackState === Playback.Uninitialized) {
-			this.playbackState = Playback.Ready;
+			this.nextActivity();
 		} else if (this.playbackState === Playback.Finished) {
-			this.playbackState = Playback.Playing;
-			this.paused = false;
-			this.scene.soundStart();
+			this.playbackState = this.paused ? Playback.Paused : Playback.Playing;
+			if (this.paused) return;
+			this.scene.updateBgm();
 			if (fastForward) {
 				this.fastForwardTo(-1);
 			} else {
@@ -3147,7 +3167,7 @@ class Battle {
 				return;
 			} else if (args[1].slice(-14) === ' seconds left.') {
 				let hasIndex = args[1].indexOf(' has ');
-				let userid = (window.app && app!.user && app!.user.get('userid'));
+				let userid = window.app?.user?.get('userid');
 				if (toID(args[1].slice(0, hasIndex)) === userid) {
 					this.kickingInactive = parseInt(args[1].slice(hasIndex + 5), 10) || true;
 				}
@@ -3162,12 +3182,11 @@ class Battle {
 			this.log(args, undefined, preempt);
 			break;
 		}
-		case 'join': case 'j': {
+		case 'join': case 'j': case 'J': {
 			if (this.roomid) {
 				let room = app!.rooms[this.roomid];
 				let user = BattleTextParser.parseNameParts(args[1]);
 				let userid = toUserid(user.name);
-				if (/^[a-z0-9]/i.test(user.name)) user.name = ' ' + user.name;
 				if (!room.users[userid]) room.userCount.users++;
 				room.users[userid] = user;
 				room.userList.add(userid);
@@ -3179,7 +3198,7 @@ class Battle {
 			}
 			break;
 		}
-		case 'leave': case 'l': {
+		case 'leave': case 'l': case 'L': {
 			if (this.roomid) {
 				let room = app!.rooms[this.roomid];
 				let user = args[1];
@@ -3195,7 +3214,7 @@ class Battle {
 			}
 			break;
 		}
-		case 'name': case 'n': {
+		case 'name': case 'n': case 'N': {
 			if (this.roomid) {
 				let room = app!.rooms[this.roomid];
 				let user = BattleTextParser.parseNameParts(args[1]);
@@ -3246,7 +3265,7 @@ class Battle {
 			break;
 		}
 		case 'poke': {
-			let pokemon = this.getPokemon('new: ' + args[1], args[2])!;
+			let pokemon = this.rememberTeamPreviewPokemon(args[1], args[2])!;
 			if (args[3] === 'item') {
 				pokemon.item = '(exists)';
 			}
@@ -3259,7 +3278,7 @@ class Battle {
 		}
 		case 'switch': case 'drag': case 'replace': {
 			this.endLastTurn();
-			let poke = this.getPokemon('switchin: ' + args[1], args[2])!;
+			let poke = this.getSwitchedPokemon(args[1], args[2])!;
 			let slot = poke.slot;
 			poke.healthParse(args[3]);
 			poke.removeVolatile('itemremoved' as ID);
@@ -3355,7 +3374,7 @@ class Battle {
 			return;
 		}
 		if (!str) return;
-		const {args, kwArgs} = BattleTextParser.parseLine(str);
+		const {args, kwArgs} = BattleTextParser.parseBattleLine(str);
 
 		if (this.scene.maybeCloseMessagebar(args, kwArgs)) {
 			this.activityStep--;
@@ -3367,8 +3386,8 @@ class Battle {
 		let nextArgs: Args = [''];
 		let nextKwargs: KWArgs = {};
 		const nextLine = this.activityQueue[this.activityStep + 1] || '';
-		if (nextLine && nextLine.substr(0, 2) === '|-') {
-			({args: nextArgs, kwArgs: nextKwargs} = BattleTextParser.parseLine(nextLine));
+		if (nextLine.slice(0, 2) === '|-') {
+			({args: nextArgs, kwArgs: nextKwargs} = BattleTextParser.parseBattleLine(nextLine));
 		}
 
 		if (this.debug) {
@@ -3399,11 +3418,12 @@ class Battle {
 			}
 		}
 
-		if (this.fastForward > 0 && this.fastForward < 1) {
-			if (nextLine.substr(0, 6) === '|start') {
-				this.fastForwardOff();
-				if (this.endCallback) this.endCallback(this);
+		if (nextLine.startsWith('|start') || args[0] === 'teampreview') {
+			this.started = true;
+			if (this.playbackState === Playback.Uninitialized) {
+				this.playbackState = Playback.Ready;
 			}
+			this.scene.updateBgm();
 		}
 	}
 	checkActive(poke: Pokemon) {
@@ -3430,11 +3450,7 @@ class Battle {
 	}
 	fastForwardTo(time: string | number) {
 		if (this.fastForward) return;
-		if (time === 0 || time === '0') {
-			time = 0.5;
-		} else {
-			time = Math.floor(Number(time));
-		}
+		time = Math.floor(Number(time));
 		if (isNaN(time)) return;
 		if (this.ended && time >= this.turn + 1) return;
 
@@ -3444,6 +3460,11 @@ class Battle {
 			if (paused) this.pause();
 			else this.paused = false;
 			this.fastForwardWillScroll = true;
+		}
+		if (!time) {
+			this.fastForwardOff();
+			this.nextActivity();
+			return;
 		}
 		this.scene.animationOff();
 		this.playbackState = Playback.Seeking;
@@ -3456,21 +3477,27 @@ class Battle {
 		this.playbackState = this.paused ? Playback.Paused : Playback.Playing;
 	}
 	nextActivity() {
+		if (this.playbackState === Playback.Ready || this.playbackState === Playback.Paused) {
+			return;
+		}
+
 		this.scene.startAnimations();
-		let animations;
+		let animations = undefined;
 		while (!animations) {
 			this.waitForAnimations = true;
 			if (this.activityStep >= this.activityQueue.length) {
 				this.fastForwardOff();
-				if (this.ended) {
-					this.paused = true;
-					this.scene.soundStop();
-				}
 				this.playbackState = Playback.Finished;
+				if (this.ended) {
+					this.scene.updateBgm();
+				}
 				if (this.endCallback) this.endCallback(this);
 				return;
 			}
-			if (this.paused && !this.fastForward) return;
+			// @ts-ignore property modified in method
+			if (this.playbackState === Playback.Ready || this.playbackState === Playback.Paused) {
+				return;
+			}
 			this.run(this.activityQueue[this.activityStep]);
 			this.activityStep++;
 			if (this.waitForAnimations === true) {
@@ -3480,7 +3507,10 @@ class Battle {
 			}
 		}
 
-		if (this.playbackState === Playback.Paused) return;
+		// @ts-ignore property modified in method
+		if (this.playbackState === Playback.Ready || this.playbackState === Playback.Paused) {
+			return;
+		}
 
 		const interruptionCount = this.scene.interruptionCount;
 		animations.done(() => {
@@ -3490,28 +3520,9 @@ class Battle {
 		});
 	}
 
-	newBattle() {
-		this.reset();
-		this.activityQueue = [];
-	}
 	setQueue(queue: string[]) {
-		this.reset();
 		this.activityQueue = queue;
-
-		/* for (let i = 0; i < queue.length && i < 20; i++) {
-			if (queue[i].substr(0, 8) === 'pokemon ') {
-				let sp = this.parseSpriteData(queue[i].substr(8));
-				BattleSound.loadEffect(sp.cryurl);
-				this.preloadImage(sp.url);
-				if (sp.url === '/sprites/bwani/meloetta.gif') {
-					this.preloadImage('/sprites/bwani/meloetta-pirouette.gif');
-				}
-				if (sp.url === '/sprites/bwani-back/meloetta.gif') {
-					this.preloadImage('/sprites/bwani-back/meloetta-pirouette.gif');
-				}
-			}
-		} */
-		this.playbackState = Playback.Ready;
+		this.reset();
 	}
 
 	setMute(mute: boolean) {
@@ -3522,4 +3533,5 @@ class Battle {
 if (typeof require === 'function') {
 	// in Node
 	(global as any).Battle = Battle;
+	(global as any).Pokemon = Pokemon;
 }

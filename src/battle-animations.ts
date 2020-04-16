@@ -68,7 +68,7 @@ class BattleScene {
 
 	preloadDone = 0;
 	preloadNeeded = 0;
-	bgm: string | null = null;
+	bgm: BattleBGM | null = null;
 	backdropImage: string = '';
 	bgmNum = 0;
 	preloadCache: {[url: string]: HTMLImageElement} = {};
@@ -96,7 +96,7 @@ class BattleScene {
 			if (!pokemonId) return '';
 			if (battle.ignoreNicks || battle.ignoreOpponent) {
 				const pokemon = battle.getPokemon(pokemonId);
-				if (pokemon) return pokemon.species;
+				if (pokemon) return pokemon.speciesForme;
 			}
 			if (!pokemonId.startsWith('p1') && !pokemonId.startsWith('p2')) return '???pokemon:' + pokemonId + '???';
 			if (pokemonId.charAt(3) === ':') return pokemonId.slice(4).trim();
@@ -241,7 +241,7 @@ class BattleScene {
 	}
 	pause() {
 		this.stopAnimation();
-		this.soundPause();
+		this.updateBgm();
 		if (this.battle.resumeButton) {
 			this.$frame.append('<div class="playbutton"><button data-action="resume"><i class="fa fa-play icon-play"></i> Resume</button></div>');
 			this.$frame.find('div.playbutton button').click(this.battle.resumeButton);
@@ -249,7 +249,7 @@ class BattleScene {
 	}
 	resume() {
 		this.$frame.find('div.playbutton').remove();
-		this.soundStart();
+		this.updateBgm();
 	}
 	wait(time: number) {
 		if (!this.animating) return;
@@ -340,7 +340,9 @@ class BattleScene {
 
 		let left = 210;
 		let top = 245;
-		let scale = 1.5 - 0.5 * ((loc.z!) / 200);
+		let scale = (obj.gen === 5
+			? 2.0 - ((loc.z!) / 200)
+			: 1.5 - 0.5 * ((loc.z!) / 200));
 		if (scale < .1) scale = .1;
 
 		left += (410 - 190) * ((loc.z!) / 200);
@@ -555,7 +557,7 @@ class BattleScene {
 		if (Dex.prefs('nopastgens')) gen = 6;
 		if (Dex.prefs('bwgfx') && gen > 5) gen = 5;
 		this.gen = gen;
-		this.activeCount = this.battle.mySide && this.battle.mySide.active.length || 1;
+		this.activeCount = this.battle.mySide?.active.length || 1;
 
 		const isSPL = (typeof this.battle.rated === 'string' && this.battle.rated.startsWith("Smogon Premier League"));
 		let bg: string;
@@ -582,10 +584,10 @@ class BattleScene {
 	}
 
 	getDetailsText(pokemon: Pokemon) {
-		let name = pokemon.side && pokemon.side.n &&
-			(this.battle.ignoreOpponent || this.battle.ignoreNicks) ? pokemon.species : pokemon.name;
-		if (name !== pokemon.species) {
-				name += ' (' + pokemon.species + ')';
+		let name = pokemon.side?.n &&
+			(this.battle.ignoreOpponent || this.battle.ignoreNicks) ? pokemon.speciesForme : pokemon.name;
+		if (name !== pokemon.speciesForme) {
+				name += ' (' + pokemon.speciesForme + ')';
 		}
 		if (pokemon === pokemon.side.active[0]) {
 			name += ' (active)';
@@ -609,27 +611,76 @@ class BattleScene {
 
 	updateSidebar(side: Side) {
 		if (!this.animating) return;
-		let pokemonhtml = '';
 		let noShow = this.battle.hardcoreMode && this.battle.gen < 7;
-		let pokemonCount = Math.max(side.pokemon.length, 6);
-		for (let i = 0; i < pokemonCount; i++) {
-			let poke = side.pokemon[i];
-			if (i >= side.totalPokemon && i >= side.pokemon.length) {
+
+		let speciesOverage = this.battle.speciesClause ? Infinity : Math.max(side.pokemon.length - side.totalPokemon, 0);
+		const sidebarIcons: (
+			['pokemon' | 'pokemon-illusion', number] | ['unrevealed' | 'empty' | 'pseudo-zoroark', null]
+		)[] = [];
+		const speciesTable: string[] = [];
+		let zoroarkRevealed = false;
+		let hasIllusion = false;
+		if (speciesOverage) {
+			for (let i = 0; i < side.pokemon.length; i++) {
+				const species = side.pokemon[i].getBaseSpecies().baseSpecies;
+				if (speciesOverage && speciesTable.includes(species)) {
+					for (const sidebarIcon of sidebarIcons) {
+						if (side.pokemon[sidebarIcon[1]!].getBaseSpecies().baseSpecies === species) {
+							sidebarIcon[0] = 'pokemon-illusion';
+						}
+					}
+					hasIllusion = true;
+					speciesOverage--;
+				} else {
+					sidebarIcons.push(['pokemon', i]);
+					speciesTable.push(species);
+					if (['Zoroark', 'Zorua'].includes(species)) {
+						zoroarkRevealed = true;
+					}
+				}
+			}
+		} else {
+			for (let i = 0; i < side.pokemon.length; i++) {
+				sidebarIcons.push(['pokemon', i]);
+			}
+		}
+		if (!zoroarkRevealed && hasIllusion && sidebarIcons.length < side.totalPokemon) {
+			sidebarIcons.push(['pseudo-zoroark', null]);
+		}
+		while (sidebarIcons.length < side.totalPokemon) {
+			sidebarIcons.push(['unrevealed', null]);
+		}
+		while (sidebarIcons.length < 6) {
+			sidebarIcons.push(['empty', null]);
+		}
+
+		let pokemonhtml = '';
+		for (let i = 0; i < sidebarIcons.length; i++) {
+			const [iconType, pokeIndex] = sidebarIcons[i];
+			const poke = pokeIndex !== null ? side.pokemon[pokeIndex] : null;
+			const tooltipCode = ` class="picon has-tooltip" data-tooltip="pokemon|${side.n}|${pokeIndex}${iconType === 'pokemon-illusion' ? '|illusion' : ''}"`;
+			if (iconType === 'empty') {
 				pokemonhtml += `<span class="picon" style="` + Dex.getPokemonIcon('pokeball-none') + `"></span>`;
-			} else if (noShow && poke && poke.fainted) {
-				pokemonhtml += `<span class="picon has-tooltip" data-tooltip="pokemon|${side.n}|${i}" style="` + Dex.getPokemonIcon('pokeball-fainted') + `" title="Fainted" aria-label="Fainted"></span>`;
-			} else if (noShow && poke && poke.status) {
-				pokemonhtml += `<span class="picon has-tooltip" data-tooltip="pokemon|${side.n}|${i}" style="` + Dex.getPokemonIcon('pokeball-statused') + `" title="Status" aria-label="Status"></span>`;
 			} else if (noShow) {
-				pokemonhtml += `<span class="picon has-tooltip" data-tooltip="pokemon|${side.n}|${i}" style="` + Dex.getPokemonIcon('pokeball') + `" title="Non-statused" aria-label="Non-statused"></span>`;
+				if (poke?.fainted) {
+					pokemonhtml += `<span${tooltipCode} style="` + Dex.getPokemonIcon('pokeball-fainted') + `" aria-label="Fainted"></span>`;
+				} else if (poke?.status) {
+					pokemonhtml += `<span${tooltipCode} style="` + Dex.getPokemonIcon('pokeball-statused') + `" aria-label="Statused"></span>`;
+				} else {
+					pokemonhtml += `<span${tooltipCode} style="` + Dex.getPokemonIcon('pokeball') + `" aria-label="Non-statused"></span>`;
+				}
+			} else if (iconType === 'pseudo-zoroark') {
+				pokemonhtml += `<span class="picon" style="` + Dex.getPokemonIcon('zoroark') + `" title="Unrevealed Illusion user" aria-label="Unrevealed Illusion user"></span>`;
 			} else if (!poke) {
 				pokemonhtml += `<span class="picon" style="` + Dex.getPokemonIcon('pokeball') + `" title="Not revealed" aria-label="Not revealed"></span>`;
 			} else if (!poke.ident && this.battle.teamPreviewCount && this.battle.teamPreviewCount < side.pokemon.length) {
+				// in VGC (bring 6 pick 4) and other pick-less-than-you-bring formats, this is
+				// a pokemon that's been brought but not necessarily picked
 				const details = this.getDetailsText(poke);
-				pokemonhtml += `<span class="picon has-tooltip" data-tooltip="pokemon|${side.n}|${i}" style="` + Dex.getPokemonIcon(poke, !side.n) + `;opacity:0.6" title="` + details + `" aria-label="` + details + `"></span>`;
+				pokemonhtml += `<span${tooltipCode} style="` + Dex.getPokemonIcon(poke, !side.n) + `;opacity:0.6" aria-label="${details}"></span>`;
 			} else {
 				const details = this.getDetailsText(poke);
-				pokemonhtml += `<span class="picon has-tooltip" data-tooltip="pokemon|${side.n}|${i}" style="` + Dex.getPokemonIcon(poke, !side.n) + `" title="` + details + `" aria-label="` + details + `"></span>`;
+				pokemonhtml += `<span${tooltipCode} style="` + Dex.getPokemonIcon(poke, !side.n) + `" aria-label="${details}"></span>`;
 			}
 			if (i % 3 === 2) pokemonhtml += `</div><div class="teamicons">`;
 		}
@@ -637,7 +688,7 @@ class BattleScene {
 		const $sidebar = (side.n ? this.$rightbar : this.$leftbar);
 		if (side.name) {
 			const ratinghtml = side.rating ? ` title="Rating: ${BattleLog.escapeHTML(side.rating)}"` : ``;
-			$sidebar.html(`<div class="trainer"${ratinghtml}><strong>${BattleLog.escapeHTML(side.name)}</strong><div class="trainersprite" style="background-image:url(${Dex.resolveAvatar(side.avatar)})"></div>${pokemonhtml}</div>`);
+			$sidebar.html(`<div class="trainer"><strong>${BattleLog.escapeHTML(side.name)}</strong><div class="trainersprite"${ratinghtml} style="background-image:url(${Dex.resolveAvatar(side.avatar)})"></div>${pokemonhtml}</div>`);
 			$sidebar.find('.trainer').css('opacity', 1);
 		} else {
 			$sidebar.find('.trainer').css('opacity', 0.4);
@@ -661,6 +712,7 @@ class BattleScene {
 		}
 	}
 	teamPreview() {
+		let newBGNum = 0;
 		for (let siden = 0; siden < 2; siden++) {
 			let side = this.battle.sides[siden];
 			let textBuf = '';
@@ -672,12 +724,13 @@ class BattleScene {
 			let lombreCount = 0;
 			for (let i = 0; i < side.pokemon.length; i++) {
 				let pokemon = side.pokemon[i];
-				if (pokemon.species === 'Ludicolo') ludicoloCount++;
-				if (pokemon.species === 'Lombre') lombreCount++;
+				if (pokemon.speciesForme === 'Ludicolo') ludicoloCount++;
+				if (pokemon.speciesForme === 'Lombre') lombreCount++;
 
 				let spriteData = Dex.getSpriteData(pokemon, siden, {
 					gen: this.gen,
 					noScale: true,
+					mod: this.mod,
 				});
 				let y = 0;
 				let x = 0;
@@ -689,15 +742,14 @@ class BattleScene {
 					x = 48 + 100 + 50 * i;
 				}
 				if (textBuf) textBuf += ' / ';
-				textBuf += pokemon.species;
+				textBuf += pokemon.speciesForme;
 				let url = spriteData.url;
 				// if (this.paused) url.replace('/xyani', '/xy').replace('.gif', '.png');
 				buf += '<img src="' + url + '" width="' + spriteData.w + '" height="' + spriteData.h + '" style="position:absolute;top:' + Math.floor(y - spriteData.h / 2) + 'px;left:' + Math.floor(x - spriteData.w / 2) + 'px" />';
 				buf2 += '<div style="position:absolute;top:' + (y + 45) + 'px;left:' + (x - 40) + 'px;width:80px;font-size:10px;text-align:center;color:#FFF;">';
-				if (pokemon.gender === 'F') {
-					buf2 += '<img src="' + Dex.resourcePrefix + 'fx/gender-f.png" width="7" height="10" alt="F" style="margin-bottom:-1px" /> ';
-				} else if (pokemon.gender === 'M') {
-					buf2 += '<img src="' + Dex.resourcePrefix + 'fx/gender-m.png" width="7" height="10" alt="M" style="margin-bottom:-1px" /> ';
+				const gender = pokemon.gender;
+				if (gender === 'M' || gender === 'F') {
+					buf2 += `<img src="${Dex.resourcePrefix}fx/gender-${gender.toLowerCase()}.png" alt="${gender}" width="7" height="10" class="pixelated" style="margin-bottom:-1px" /> `;
 				}
 				if (pokemon.level !== 100) {
 					buf2 += '<span style="text-shadow:#000 1px 1px 0,#000 1px -1px 0,#000 -1px 1px 0,#000 -1px -1px 0"><small>L</small>' + pokemon.level + '</span>';
@@ -715,14 +767,16 @@ class BattleScene {
 			}
 			this.$sprites[siden].html(buf + buf2);
 
-			if (ludicoloCount >= 2) {
-				this.bgmNum = -3;
-			} else if (ludicoloCount + lombreCount >= 2) {
-				this.bgmNum = -2;
+			if (!newBGNum) {
+				if (ludicoloCount >= 2) {
+					newBGNum = -3;
+				} else if (ludicoloCount + lombreCount >= 2) {
+					newBGNum = -2;
+				}
 			}
 		}
-		if (this.bgmNum < 0) {
-			this.setBgm(this.bgmNum);
+		if (newBGNum !== 0) {
+			this.setBgm(newBGNum);
 		}
 		this.wait(1000);
 		this.updateSidebars();
@@ -822,8 +876,8 @@ class BattleScene {
 		}
 
 		let weatherhtml = '';
-		if (weather && weather in weatherNameTable) {
-			weatherhtml += '<br />' + weatherNameTable[weather] + this.weatherLeft();
+		if (weather) {
+			weatherhtml += '<br />' + (weatherNameTable[weather] || weather) + this.weatherLeft();
 		}
 		for (const pseudoWeather of this.battle.pseudoWeather) {
 			weatherhtml += this.pseudoWeatherLeft(pseudoWeather);
@@ -916,6 +970,7 @@ class BattleScene {
 		const siden = pokemon.side.n;
 		const sprite = new PokemonSprite(Dex.getSpriteData(pokemon, siden, {
 			gen: this.gen,
+			mod: this.mod,
 		}), {
 			x: pokemon.side.x,
 			y: pokemon.side.y,
@@ -1073,6 +1128,37 @@ class BattleScene {
 			this.$spritesFront[siden].append(rock4.$el!);
 			this.sideConditions[siden][id] = [rock1, rock2, rock3, rock4];
 			break;
+		case 'gmaxsteelsurge':
+			const surge1 = new Sprite(BattleEffects.greenmetal1, {
+				display: 'block',
+				x: side.leftof(-30),
+				y: side.y - 20,
+				z: side.z,
+				opacity: 0.5,
+				scale: 0.8,
+			}, this);
+			const surge2 = new Sprite(BattleEffects.greenmetal2, {
+				display: 'block',
+				x: side.leftof(35),
+				y: side.y - 15,
+				z: side.z,
+				opacity: 0.5,
+				scale: 0.8,
+			}, this);
+			const surge3 = new Sprite(BattleEffects.greenmetal1, {
+				display: 'block',
+				x: side.leftof(50),
+				y: side.y - 10,
+				z: side.z,
+				opacity: 0.5,
+				scale: 0.8,
+			}, this);
+
+			this.$spritesFront[siden].append(surge1.$el!);
+			this.$spritesFront[siden].append(surge2.$el!);
+			this.$spritesFront[siden].append(surge3.$el!);
+			this.sideConditions[siden][id] = [surge1, surge2, surge3];
+			break;
 		case 'spikes':
 			let spikeArray = this.sideConditions[siden]['spikes'];
 			if (!spikeArray) {
@@ -1228,7 +1314,7 @@ class BattleScene {
 
 		let $hp = pokemon.sprite.$statbar.find('div.hp');
 		let w = pokemon.hpWidth(150);
-		let hpcolor = pokemon.getHPColor();
+		let hpcolor = BattleScene.getHPColor(pokemon);
 		let callback;
 		if (hpcolor === 'y') {
 			callback = () => { $hp.addClass('hp-yellow'); };
@@ -1251,7 +1337,7 @@ class BattleScene {
 
 		let $hp = pokemon.sprite.$statbar.find('div.hp');
 		let w = pokemon.hpWidth(150);
-		let hpcolor = pokemon.getHPColor();
+		let hpcolor = BattleScene.getHPColor(pokemon);
 		let callback;
 		if (hpcolor === 'g') {
 			callback = () => { $hp.removeClass('hp-yellow hp-red'); };
@@ -1320,9 +1406,7 @@ class BattleScene {
 		return pokemon.sprite.afterMove();
 	}
 	updateSpritesForSide(side: Side) {
-		if (side.missedPokemon && side.missedPokemon.sprite) {
-			side.missedPokemon.sprite.destroy();
-		}
+		side.missedPokemon?.sprite?.destroy();
 
 		side.missedPokemon = {
 			sprite: new PokemonSprite(null, {
@@ -1365,118 +1449,115 @@ class BattleScene {
 			const url = BattleEffects[i].url;
 			if (url) this.preloadImage(url);
 		}
-		this.preloadImage(Dex.resourcePrefix + 'sprites/xyani/substitute.gif');
-		this.preloadImage(Dex.resourcePrefix + 'sprites/xyani-back/substitute.gif');
+		this.preloadImage(Dex.resourcePrefix + 'sprites/ani/substitute.gif');
+		this.preloadImage(Dex.resourcePrefix + 'sprites/ani-back/substitute.gif');
+	}
+	rollBgm() {
+		this.setBgm(1 + this.numericId % 15);
 	}
 	setBgm(bgmNum: number) {
-		if (!bgmNum) bgmNum = (1 + this.numericId % 15);
 		if (this.bgmNum === bgmNum) return;
-		this.bgmNum = bgmNum;
-		if (this.bgm) {
-			this.preloadBgm();
-			if (this.animating) this.soundStart();
-		}
-	}
-	preloadBgm(bgmNum = 0) {
-		if (bgmNum === 0) bgmNum = this.bgmNum || (1 + this.numericId % 15);
 		this.bgmNum = bgmNum;
 
 		let ext = window.nodewebkit ? '.ogg' : '.mp3';
 		switch (bgmNum) {
 		case -1:
-			BattleSound.loadBgm('audio/bw2-homika-dogars' + ext, 1661, 68131);
-			this.bgm = 'audio/bw2-homika-dogars' + ext;
+			this.bgm = BattleSound.loadBgm('audio/bw2-homika-dogars' + ext, 1661, 68131, this.bgm);
 			break;
 		case -2:
-			BattleSound.loadBgm('audio/xd-miror-b' + ext, 9000, 57815);
-			this.bgm = 'audio/xd-miror-b' + ext;
+			this.bgm = BattleSound.loadBgm('audio/xd-miror-b' + ext, 9000, 57815, this.bgm);
 			break;
 		case -3:
-			BattleSound.loadBgm('audio/colosseum-miror-b' + ext, 896, 47462);
-			this.bgm = 'audio/colosseum-miror-b' + ext;
+			this.bgm = BattleSound.loadBgm('audio/colosseum-miror-b' + ext, 896, 47462, this.bgm);
 			break;
 		case 1:
-			BattleSound.loadBgm('audio/dpp-trainer' + ext, 13440, 96959);
-			this.bgm = 'audio/dpp-trainer' + ext;
+			this.bgm = BattleSound.loadBgm('audio/dpp-trainer' + ext, 13440, 96959, this.bgm);
 			break;
 		case 2:
-			BattleSound.loadBgm('audio/dpp-rival' + ext, 13888, 66352);
-			this.bgm = 'audio/dpp-rival' + ext;
+			this.bgm = BattleSound.loadBgm('audio/dpp-rival' + ext, 13888, 66352, this.bgm);
 			break;
 		case 3:
-			BattleSound.loadBgm('audio/hgss-johto-trainer' + ext, 23731, 125086);
-			this.bgm = 'audio/hgss-johto-trainer' + ext;
+			this.bgm = BattleSound.loadBgm('audio/hgss-johto-trainer' + ext, 23731, 125086, this.bgm);
 			break;
 		case 4:
-			BattleSound.loadBgm('audio/hgss-kanto-trainer' + ext, 13003, 94656);
-			this.bgm = 'audio/hgss-kanto-trainer' + ext;
+			this.bgm = BattleSound.loadBgm('audio/hgss-kanto-trainer' + ext, 13003, 94656, this.bgm);
 			break;
 		case 5:
-			BattleSound.loadBgm('audio/bw-trainer' + ext, 14629, 110109);
-			this.bgm = 'audio/bw-trainer' + ext;
+			this.bgm = BattleSound.loadBgm('audio/bw-trainer' + ext, 14629, 110109, this.bgm);
 			break;
 		case 6:
-			BattleSound.loadBgm('audio/bw-rival' + ext, 19180, 57373);
-			this.bgm = 'audio/bw-rival' + ext;
+			this.bgm = BattleSound.loadBgm('audio/bw-rival' + ext, 19180, 57373, this.bgm);
 			break;
 		case 7:
-			BattleSound.loadBgm('audio/bw-subway-trainer' + ext, 15503, 110984);
-			this.bgm = 'audio/bw-subway-trainer' + ext;
+			this.bgm = BattleSound.loadBgm('audio/bw-subway-trainer' + ext, 15503, 110984, this.bgm);
 			break;
 		case 8:
-			BattleSound.loadBgm('audio/bw2-kanto-gym-leader' + ext, 14626, 58986);
-			this.bgm = 'audio/bw2-kanto-gym-leader' + ext;
+			this.bgm = BattleSound.loadBgm('audio/bw2-kanto-gym-leader' + ext, 14626, 58986, this.bgm);
 			break;
 		case 9:
-			BattleSound.loadBgm('audio/bw2-rival' + ext, 7152, 68708);
-			this.bgm = 'audio/bw2-rival' + ext;
+			this.bgm = BattleSound.loadBgm('audio/bw2-rival' + ext, 7152, 68708, this.bgm);
 			break;
 		case 10:
-			BattleSound.loadBgm('audio/xy-trainer' + ext, 7802, 82469);
-			this.bgm = 'audio/xy-trainer' + ext;
+			this.bgm = BattleSound.loadBgm('audio/xy-trainer' + ext, 7802, 82469, this.bgm);
 			break;
 		case 11:
-			BattleSound.loadBgm('audio/xy-rival' + ext, 7802, 58634);
-			this.bgm = 'audio/xy-rival' + ext;
+			this.bgm = BattleSound.loadBgm('audio/xy-rival' + ext, 7802, 58634, this.bgm);
 			break;
 		case 12:
-			BattleSound.loadBgm('audio/oras-trainer' + ext, 13579, 91548);
-			this.bgm = 'audio/oras-trainer' + ext;
+			this.bgm = BattleSound.loadBgm('audio/oras-trainer' + ext, 13579, 91548, this.bgm);
 			break;
 		case 13:
-			BattleSound.loadBgm('audio/oras-rival' + ext, 14303, 69149);
-			this.bgm = 'audio/oras-rival' + ext;
+			this.bgm = BattleSound.loadBgm('audio/oras-rival' + ext, 14303, 69149, this.bgm);
 			break;
 		case 14:
-			BattleSound.loadBgm('audio/sm-trainer' + ext, 8323, 89230);
-			this.bgm = 'audio/sm-trainer' + ext;
+			this.bgm = BattleSound.loadBgm('audio/sm-trainer' + ext, 8323, 89230, this.bgm);
 			break;
 		case -101:
-			BattleSound.loadBgm('audio/spl-elite4' + ext, 3962, 152509);
-			this.bgm = 'audio/spl-elite4' + ext;
+			this.bgm = BattleSound.loadBgm('audio/spl-elite4' + ext, 3962, 152509, this.bgm);
 			break;
 		case 15:
 		default:
-			BattleSound.loadBgm('audio/sm-rival' + ext, 11389, 62158);
-			this.bgm = 'audio/sm-rival' + ext;
+			this.bgm = BattleSound.loadBgm('audio/sm-rival' + ext, 11389, 62158, this.bgm);
 			break;
 		}
 	}
-	soundStart() {
-		if (!this.bgm) this.preloadBgm();
-		BattleSound.playBgm(this.bgm!);
+	updateBgm() {
+		/**
+		 * - not playing in non-battle RoomGames (Playback.Uninitialized)
+		 * - not playing at team preview in replays (Playback.Ready)
+		 * - playing at team preview in games (Playback.Playing)
+		 * - playing during the game (Playback.Playing)
+		 * - not playing while paused
+		 * - playing while waiting for players to choose moves (Playback.Finished)
+		 * - not playing after the game has ended
+		 */
+		const nowPlaying = this.battle.playbackState > Playback.Ready && (
+			this.battle.started && !this.battle.ended && !this.battle.paused
+		);
+		if (nowPlaying) {
+			if (!this.bgm) this.rollBgm();
+			this.bgm!.play();
+		} else if (this.bgm) {
+			this.bgm.pause();
+		}
 	}
-	soundStop() {
-		BattleSound.stopBgm();
-	}
-	soundPause() {
-		BattleSound.pauseBgm();
+	resetBgm() {
+		if (this.bgm) this.bgm.stop();
 	}
 	destroy() {
 		this.log.destroy();
 		if (this.$frame) this.$frame.empty();
-		this.soundStop();
+		if (this.bgm) {
+			this.bgm.destroy();
+			this.bgm = null;
+		}
 		this.battle = null!;
+	}
+	static getHPColor(pokemon: {hp: number, maxhp: number}) {
+		let ratio = pokemon.hp / pokemon.maxhp;
+		if (ratio > 0.5) return 'g';
+		if (ratio > 0.2) return 'y';
+		return 'r';
 	}
 }
 
@@ -1665,6 +1746,7 @@ class PokemonSprite extends Sprite {
 		if (this.$sub) return;
 		const subsp = Dex.getSpriteData('substitute', this.siden, {
 			gen: this.scene.gen,
+			mod: this.scene.mod,
 		});
 		this.subsp = subsp;
 		this.$sub = $('<img src="' + subsp.url + '" style="display:block;opacity:0;position:absolute"' + (subsp.pixelated ? ' class="pixelated"' : '') + ' />');
@@ -1775,11 +1857,15 @@ class PokemonSprite extends Sprite {
 	reset(pokemon: Pokemon) {
 		this.clearEffects();
 
-		if (pokemon.volatiles.formechange) {
-			this.oldsp = this.sp;
+		if (pokemon.volatiles.formechange || pokemon.volatiles.dynamax) {
+			if (!this.oldsp) this.oldsp = this.sp;
 			this.sp = Dex.getSpriteData(pokemon, this.isBackSprite ? 0 : 1, {
 				gen: this.scene.gen,
+				mod: this.scene.mod,
 			});
+		} else if (this.oldsp) {
+			this.sp = this.oldsp;
+			this.oldsp = null;
 		}
 
 		// I can rant for ages about how jQuery sucks, necessitating this function
@@ -1881,7 +1967,7 @@ class PokemonSprite extends Sprite {
 			statbarOffset += this.isBackSprite ? 1 : 20;
 		} else if (this.scene.gen <= 3) {
 			statbarOffset += this.isBackSprite ? 5 : 30;
-		} else {
+		} else if (this.scene.gen !== 5) {
 			statbarOffset += this.isBackSprite ? 20 : 30;
 		}
 
@@ -2168,6 +2254,7 @@ class PokemonSprite extends Sprite {
 		if (!this.scene.animating && !isPermanent) return;
 		let sp = Dex.getSpriteData(pokemon, this.isBackSprite ? 0 : 1, {
 			gen: this.scene.gen,
+			mod: this.scene.mod,
 		});
 		let oldsp = this.sp;
 		if (isPermanent) {
@@ -2179,7 +2266,7 @@ class PokemonSprite extends Sprite {
 		this.cryurl = sp.cryurl;
 
 		if (!this.scene.animating) return;
-		let speciesid = toID(pokemon.getSpecies());
+		let speciesid = toID(pokemon.getSpeciesForme());
 		let doCry = false;
 		const scene = this.scene;
 		if (isCustomAnim) {
@@ -2336,10 +2423,10 @@ class PokemonSprite extends Sprite {
 	dogarsCheck(pokemon: Pokemon) {
 		if (pokemon.side.n === 1) return;
 
-		if (pokemon.species === 'Koffing' && pokemon.name.match(/dogars/i)) {
+		if (pokemon.speciesForme === 'Koffing' && pokemon.name.match(/dogars/i)) {
 			this.scene.setBgm(-1);
 		} else if (this.scene.bgmNum === -1) {
-			this.scene.setBgm(0);
+			this.scene.rollBgm();
 		}
 	}
 
@@ -2349,17 +2436,17 @@ class PokemonSprite extends Sprite {
 	getStatbarHTML(pokemon: Pokemon) {
 		let buf = '<div class="statbar' + (this.siden ? ' lstatbar' : ' rstatbar') + '" style="display: none">';
 		const ignoreNick = this.siden && (this.scene.battle.ignoreOpponent || this.scene.battle.ignoreNicks);
-		buf += `<strong>${BattleLog.escapeHTML(ignoreNick ? pokemon.species : pokemon.name)}`;
-		let gender = pokemon.gender;
-		if (gender) {
-			buf += ` <img src="${Dex.resourcePrefix}fx/gender-${gender.toLowerCase()}.png" alt="${gender}" />`;
+		buf += `<strong>${BattleLog.escapeHTML(ignoreNick ? pokemon.speciesForme : pokemon.name)}`;
+		const gender = pokemon.gender;
+		if (gender === 'M' || gender === 'F') {
+			buf += ` <img src="${Dex.resourcePrefix}fx/gender-${gender.toLowerCase()}.png" alt="${gender}" width="7" height="10" class="pixelated" />`;
 		}
 		buf += (pokemon.level === 100 ? `` : ` <small>L${pokemon.level}</small>`);
 
 		let symbol = '';
-		if (pokemon.species.indexOf('-Mega') >= 0) symbol = 'mega';
-		else if (pokemon.species === 'Kyogre-Primal') symbol = 'alpha';
-		else if (pokemon.species === 'Groudon-Primal') symbol = 'omega';
+		if (pokemon.speciesForme.indexOf('-Mega') >= 0) symbol = 'mega';
+		else if (pokemon.speciesForme === 'Kyogre-Primal') symbol = 'alpha';
+		else if (pokemon.speciesForme === 'Groudon-Primal') symbol = 'omega';
 		if (symbol) {
 			buf += ` <img src="${Dex.resourcePrefix}sprites/misc/${symbol}.png" alt="${symbol}" style="vertical-align:text-bottom;" />`;
 		}
@@ -2404,7 +2491,7 @@ class PokemonSprite extends Sprite {
 		}
 		let hpcolor;
 		if (updatePrevhp || updateHp) {
-			hpcolor = pokemon.getHPColor();
+			hpcolor = BattleScene.getHPColor(pokemon);
 			let w = pokemon.hpWidth(150);
 			let $hp = this.$statbar.find('.hp');
 			$hp.css({
@@ -2457,6 +2544,7 @@ class PokemonSprite extends Sprite {
 			formechange: '',
 			typechange: '',
 			typeadd: '',
+			dynamax: '<span class="good">Dynamaxed</span> ',
 			trapped: '', // linked volatiles are not implemented yet
 			throatchop: '<span class="bad">Throat&nbsp;Chop</span> ',
 			confusion: '<span class="bad">Confused</span> ',
@@ -2495,6 +2583,8 @@ class PokemonSprite extends Sprite {
 			smackdown: '<span class="bad">Smack&nbsp;Down</span> ',
 			focusenergy: '<span class="good">Focus&nbsp;Energy</span> ',
 			slowstart: '<span class="bad">Slow&nbsp;Start</span> ',
+			noretreat: '<span class="bad">No&nbsp;Retreat</span> ',
+			octolock: '<span class="bad">Octolock</span> ',
 			doomdesire: '',
 			futuresight: '',
 			mimic: '<span class="good">Mimic</span> ',
@@ -2510,6 +2600,7 @@ class PokemonSprite extends Sprite {
 			wideguard: '<span class="good">Wide&nbsp;Guard</span>',
 			craftyshield: '<span class="good">Crafty&nbsp;Shield</span>',
 			matblock: '<span class="good">Mat&nbsp;Block</span>',
+			maxguard: '<span class="good">Max&nbsp;Guard</span>',
 			helpinghand: '<span class="good">Helping&nbsp;Hand</span>',
 			magiccoat: '<span class="good">Magic&nbsp;Coat</span>',
 			destinybond: '<span class="good">Destiny&nbsp;Bond</span>',
@@ -2601,15 +2692,92 @@ Object.assign($.easing, {
 	},
 });
 
+interface SMSound {
+	play(): this;
+	pause(): this;
+	stop(): this;
+	resume(): this;
+	setVolume(volume: number): this;
+	setPosition(position: number): this;
+	onposition(position: number, callback: (this: this) => void): this;
+	position: number;
+	readonly paused: boolean;
+	playState: 0 | 1;
+	isSoundPlaceholder?: boolean;
+}
+class BattleBGM {
+	/**
+	 * May be shared with other BGM objects: every battle has its own BattleBGM
+	 * object, but two battles with the same music will have the same SMSound
+	 * object.
+	 */
+	sound: SMSound;
+	isPlaying = false;
+	constructor(sound: SMSound) {
+		this.sound = sound;
+	}
+	play() {
+		if (this.isPlaying) return;
+		this.isPlaying = true;
+		if (BattleSound.muted || !BattleSound.bgmVolume) return;
+		let thisIsFirst = false;
+		for (const bgm of BattleSound.bgm) {
+			if (bgm === this) {
+				thisIsFirst = true;
+			} else if (bgm.isPlaying) {
+				if (!thisIsFirst) return;
+				bgm.sound.pause();
+				break;
+			}
+		}
+		this.sound.setVolume(BattleSound.bgmVolume);
+		// SoundManager bugs out if you call .play() while it's already playing
+		if (!this.sound.playState || this.sound.paused) {
+			this.sound.play();
+		}
+	}
+	pause() {
+		this.isPlaying = false;
+		this.sound.pause();
+		BattleBGM.update();
+	}
+	stop() {
+		this.isPlaying = false;
+		this.sound.stop();
+	}
+	destroy() {
+		this.isPlaying = false;
+		this.sound.stop();
+		const soundIndex = BattleSound.bgm.indexOf(this);
+		if (soundIndex >= 0) BattleSound.bgm.splice(soundIndex, 1);
+		BattleBGM.update();
+	}
+	static update() {
+		for (const bgm of BattleSound.bgm) {
+			if (bgm.isPlaying) {
+				if (BattleSound.muted || !BattleSound.bgmVolume) {
+					bgm.sound.pause();
+				} else {
+					bgm.sound.setVolume(BattleSound.bgmVolume);
+					// SoundManager bugs out if you call .play() while it's already playing
+					if (!bgm.sound.playState || bgm.sound.paused) {
+						bgm.sound.play();
+					}
+				}
+				break;
+			}
+		}
+	}
+}
 const BattleSound = new class {
-	effectCache: {[url: string]: any} = {};
+	effectCache: {[url: string]: SMSound} = {};
 
 	// bgm
-	bgmCache: {[url: string]: any} = {};
-	bgm: any = null!;
+	bgmCache: {[url: string]: SMSound} = {};
+	bgm: BattleBGM[] = [];
 
 	// misc
-	soundPlaceholder = {
+	soundPlaceholder: SMSound = {
 		play() { return this; },
 		pause() { return this; },
 		stop() { return this; },
@@ -2617,7 +2785,7 @@ const BattleSound = new class {
 		setVolume() { return this; },
 		onposition() { return this; },
 		isSoundPlaceholder: true,
-	};
+	} as any;
 
 	// options
 	effectVolume = 50;
@@ -2633,7 +2801,7 @@ const BattleSound = new class {
 				id: url,
 				url: Dex.resourcePrefix + url,
 				volume: this.effectVolume,
-			});
+			}) as SMSound;
 		} catch {}
 		if (!this.effectCache[url]) {
 			this.effectCache[url] = this.soundPlaceholder;
@@ -2644,59 +2812,43 @@ const BattleSound = new class {
 		if (!this.muted) this.loadEffect(url).setVolume(this.effectVolume).play();
 	}
 
+	addBgm(sound: SMSound, replaceBGM?: BattleBGM | null) {
+		if (replaceBGM) {
+			replaceBGM.sound.stop();
+			replaceBGM.sound = sound;
+			BattleBGM.update();
+			return replaceBGM;
+		}
+		const bgm = new BattleBGM(sound);
+		this.bgm.push(bgm);
+		return bgm;
+	}
+
 	/** loopstart and loopend are in milliseconds */
-	loadBgm(url: string, loopstart?: number, loopend?: number) {
-		if (this.bgmCache[url]) {
-			if (!this.bgmCache[url].isSoundPlaceholder || loopstart === undefined) {
-				return this.bgmCache[url];
+	loadBgm(url: string, loopstart: number, loopend: number, replaceBGM?: BattleBGM | null) {
+		let sound = this.bgmCache[url];
+		if (sound) {
+			if (!sound.isSoundPlaceholder) {
+				return this.addBgm(sound, replaceBGM);
 			}
 		}
 		try {
-			this.bgmCache[url] = soundManager.createSound({
+			sound = soundManager.createSound({
 				id: url,
 				url: Dex.resourcePrefix + url,
 				volume: this.bgmVolume,
 			});
 		} catch {}
-		if (!this.bgmCache[url]) {
+		if (!sound) {
 			// couldn't load
 			// suppress crash
-			return (this.bgmCache[url] = this.soundPlaceholder);
+			return this.addBgm(this.bgmCache[url] = this.soundPlaceholder, replaceBGM);
 		}
-		this.bgmCache[url].onposition(loopend, function (this: any, evP: any) {
-			this.setPosition(this.position - (loopend! - loopstart!));
+		sound.onposition(loopend, function () {
+			this.setPosition(this.position - (loopend - loopstart));
 		});
-		return this.bgmCache[url];
-	}
-	playBgm(url: string, loopstart?: number, loopstop?: number) {
-		if (this.bgm === this.loadBgm(url, loopstart, loopstop)) {
-			if (!this.bgm.paused && this.bgm.playState) {
-				return;
-			}
-		} else {
-			this.stopBgm();
-		}
-		try {
-			this.bgm = this.loadBgm(url, loopstart, loopstop).setVolume(this.bgmVolume);
-			if (!this.muted) {
-				if (this.bgm.paused) {
-					this.bgm.resume();
-				} else {
-					this.bgm.play();
-				}
-			}
-		} catch {}
-	}
-	pauseBgm() {
-		if (this.bgm) {
-			this.bgm.pause();
-		}
-	}
-	stopBgm() {
-		if (this.bgm) {
-			this.bgm.stop();
-			this.bgm = null;
-		}
+		this.bgmCache[url] = sound;
+		return this.addBgm(sound, replaceBGM);
 	}
 
 	// setting
@@ -2704,11 +2856,7 @@ const BattleSound = new class {
 		muted = !!muted;
 		if (this.muted === muted) return;
 		this.muted = muted;
-		if (muted) {
-			if (this.bgm) this.bgm.pause();
-		} else {
-			if (this.bgm) this.bgm.play();
-		}
+		BattleBGM.update();
 	}
 
 	loudnessPercentToAmplitudePercent(loudnessPercent: number) {
@@ -2718,16 +2866,22 @@ const BattleSound = new class {
 	}
 	setBgmVolume(bgmVolume: number) {
 		this.bgmVolume = this.loudnessPercentToAmplitudePercent(bgmVolume);
-		if (this.bgm) {
-			try {
-				this.bgm.setVolume(this.bgmVolume);
-			} catch {}
-		}
+		BattleBGM.update();
 	}
 	setEffectVolume(effectVolume: number) {
 		this.effectVolume = this.loudnessPercentToAmplitudePercent(effectVolume);
 	}
 };
+if (typeof PS === 'object') {
+	PS.prefs.subscribeAndRun(key => {
+		if (!key || key === 'musicvolume' || key === 'effectvolume' || key === 'mute') {
+			BattleSound.effectVolume = PS.prefs.effectvolume;
+			BattleSound.bgmVolume = PS.prefs.musicvolume;
+			BattleSound.muted = PS.prefs.mute;
+			BattleBGM.update();
+		}
+	});
+}
 
 interface AnimData {
 	anim(scene: BattleScene, args: PokemonSprite[]): void;
@@ -2804,6 +2958,14 @@ const BattleEffects: {[k: string]: SpriteData} = {
 	caltrop: {
 		url: 'caltrop.png', // by Pokemon Showdown user SailorCosmos
 		w: 80, h: 80,
+	},
+	greenmetal1: {
+		url: 'greenmetal1.png', // by Pokemon Showdown user Kalalokki
+		w: 45, h: 45,
+	},
+	greenmetal2: {
+		url: 'greenmetal2.png', // by Pokemon Showdown user Kalalokki
+		w: 45, h: 45,
 	},
 	poisoncaltrop: {
 		url: 'poisoncaltrop.png', // by Pokemon Showdown user SailorCosmos

@@ -18,7 +18,7 @@ class PSConnection {
 		const server = PS.server;
 		const port = server.protocol === 'https' ? '' : ':' + server.port;
 		const url = server.protocol + '://' + server.host + port + server.prefix;
-		const socket = this.socket = new SockJS(url);
+		const socket = this.socket = new SockJS(url, [], {timeout: 5 * 60 * 1000});
 		socket.onopen = () => {
 			console.log('\u2705 (CONNECTED)');
 			this.connected = true;

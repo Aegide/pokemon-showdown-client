@@ -97,9 +97,9 @@ class PSRoomPanel<T extends PSRoom = PSRoom> extends preact.Component<{room: T}>
 		this.props.room.onParentEvent = (id: string, e?: Event) => {
 			if (id === 'focus') this.focus();
 		};
-		this.subscriptions.push(this.props.room.subscribe(message => {
-			if (!message) this.forceUpdate();
-			else this.receive(message);
+		this.subscriptions.push(this.props.room.subscribe(args => {
+			if (!args) this.forceUpdate();
+			else this.receiveLine(args);
 		}));
 		if (this.base) {
 			this.props.room.setDimensions(this.base.offsetWidth, this.base.offsetHeight);
@@ -117,7 +117,19 @@ class PSRoomPanel<T extends PSRoom = PSRoom> extends preact.Component<{room: T}>
 		}
 		this.subscriptions = [];
 	}
-	receive(message: string) {}
+	receiveLine(args: Args) {}
+	/**
+	 * PS has "fake select menus", buttons that act like <select> dropdowns.
+	 * This function is used by the popups they open to change the button
+	 * values.
+	 */
+	chooseParentValue(value: string) {
+		const dropdownButton = this.props.room.parentElem as HTMLButtonElement;
+		dropdownButton.value = value;
+		const changeEvent = new Event('change');
+		dropdownButton.dispatchEvent(changeEvent);
+		PS.closePopup();
+	}
 	focus() {}
 	render() {
 		return <PSPanelWrapper room={this.props.room}>
@@ -127,9 +139,15 @@ class PSRoomPanel<T extends PSRoom = PSRoom> extends preact.Component<{room: T}>
 }
 
 function PSPanelWrapper(props: {
-	room: PSRoom, children: preact.ComponentChildren, scrollable?: boolean, width?: number,
+	room: PSRoom, children: preact.ComponentChildren, scrollable?: boolean, width?: number | 'auto',
 }) {
 	const room = props.room;
+	if (room.location === 'mini-window') {
+		if (room.id === 'news') {
+			return <div>{props.children}</div>;
+		}
+		return <div id={`room-${room.id}`} class="mini-window-contents ps-room-light">{props.children}</div>;
+	}
 	if (room.location !== 'left' && room.location !== 'right') {
 		const style = PSMain.getPopupStyle(room, props.width);
 		return <div class="ps-popup" id={`room-${room.id}`} style={style}>
@@ -153,7 +171,7 @@ class PSMain extends preact.Component {
 
 		window.addEventListener('click', e => {
 			let elem = e.target as HTMLElement | null;
-			if (elem && elem.className === 'ps-overlay') {
+			if (elem?.className === 'ps-overlay') {
 				PS.closePopup();
 				e.preventDefault();
 				e.stopImmediatePropagation();
@@ -241,9 +259,20 @@ class PSMain extends preact.Component {
 			}
 		});
 
-		PS.prefs.subscribeAndRun(() => {
-			document.body.className = PS.prefs.dark ? 'dark' : '';
+		PS.prefs.subscribeAndRun(key => {
+			if (!key || key === 'dark') {
+				document.body.className = PS.prefs.dark ? 'dark' : '';
+			}
 		});
+	}
+	getRoom(elem: HTMLElement) {
+		let curElem: HTMLElement | null = elem;
+		while (curElem) {
+			if (curElem.id.startsWith('room-')) {
+				return PS.rooms[curElem.id.slice(5)];
+			}
+			curElem = curElem.parentElement;
+		}
 	}
 	handleButtonClick(elem: HTMLButtonElement) {
 		switch (elem.name) {
@@ -256,6 +285,11 @@ class PSMain extends preact.Component {
 				parentElem: elem,
 			});
 			PS.update();
+			return true;
+		case 'send':
+		case 'cmd':
+			const room = this.getRoom(elem) || PS.mainmenu;
+			room.send(elem.value, elem.name === 'send');
 			return true;
 		}
 		return false;
@@ -343,7 +377,7 @@ class PSMain extends preact.Component {
 			right: right === null ? `auto` : `${-right}px`,
 		};
 	}
-	static getPopupStyle(room: PSRoom, width?: number): any {
+	static getPopupStyle(room: PSRoom, width?: number | 'auto'): any {
 		if (room.location === 'modal-popup' || !room.parentElem) {
 			return {width: width || 480};
 		}
@@ -374,11 +408,13 @@ class PSMain extends preact.Component {
 			if (availableHeight > offset.top + height + 5 &&
 				(offset.top < availableHeight * 2 / 3 || offset.top + 200 < availableHeight)) {
 				style.top = offset.top;
-			} else {
+			} else if (offset.top + sourceHeight >= height) {
 				style.bottom = Math.max(availableHeight - offset.top - sourceHeight, 0);
+			} else {
+				style.top = Math.max(0, availableHeight - height);
 			}
 			let offsetLeft = offset.left + sourceWidth;
-			if (offsetLeft + width > document.documentElement.clientWidth) {
+			if (width !== 'auto' && offsetLeft + width > document.documentElement.clientWidth) {
 				style.right = 1;
 			} else {
 				style.left = offsetLeft;
@@ -398,7 +434,7 @@ class PSMain extends preact.Component {
 			}
 
 			let availableWidth = document.documentElement.clientWidth - offset.left;
-			if (availableWidth < width + 10) {
+			if (width !== 'auto' && availableWidth < width + 10) {
 				style.right = 10;
 			} else {
 				style.left = offset.left;
