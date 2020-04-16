@@ -45,3 +45,7 @@ package-lock.json
 /replays/theme/wrapper.inc.php
 
 .vscode
+/.vs/slnx.sqlite
+/.vs/slnx.sqlite-journal
+/.vs/Pokemon-Showdown-Client/v15/.suo
+*.json
