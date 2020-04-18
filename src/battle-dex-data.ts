@@ -520,6 +520,13 @@ const BattlePokemonIconIndexes: {[id: string]: number} = {
 	swirlpool: 1332 + 28,
 	coribalis: 1332 + 29,
 	justyke: 1332 + 30,
+
+	//League of Legends
+	alistar: 1368 + 0,
+	amumu: 1368 + 1,
+	anivia: 1368 + 2,
+	ezreal: 1368 + 3,
+	garen: 1368 + 4,
 };
 
 const BattlePokemonIconIndexesLeft: {[id: string]: number} = {
